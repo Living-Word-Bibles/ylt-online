@@ -1,4 +1,4 @@
-// YLT Static Verse Site Generator — single-file build
+// YLT Static Verse Site Generator — single-file build (no deps)
 // Output: ./dist/<book>/<chapter>/<verse>/index.html
 
 import fs from "node:fs/promises";
@@ -7,23 +7,35 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ---------- Config ----------
-const SITE_ORIGIN = process.env.SITE_ORIGIN || "https://www.ylt.livingwordbibles.com";
+// ---------- Domain / Origin ----------
+const CUSTOM_DOMAIN = process.env.CUSTOM_DOMAIN?.trim(); // e.g., "ylt.livingwordbibles.com"
+const DOMAIN = CUSTOM_DOMAIN || "ylt.livingwordbibles.com";          // default: no "www"
+const SITE_ORIGIN = `https://${DOMAIN}`;
+
+// ---------- Brand / Ads ----------
 const BRAND = "Living Word Bibles";
 const LOGO_URL = "https://static1.squarespace.com/static/68d6b7d6d21f02432fd7397b/t/690209b3567af44aabfbdaca/1761741235124/LivingWordBibles01.png";
 const ADSENSE_CLIENT = "ca-pub-5303063222439969";
 const TITLE_MAIN = "The Holy Bible: Young's Literal Translation";
 
+// ---------- Data (prefers local, falls back to pinned JSON) ----------
 const LOCAL_JSON = path.join(__dirname, "data", "YLT_bible.json");
 const DATA_URLS = [
   "https://cdn.jsdelivr.net/gh/jadenzaleski/bible-translations@86d528c69b5bbcca9ce0dc0b17b037c1128c6651/YLT/YLT_bible.json",
   "https://raw.githubusercontent.com/jadenzaleski/bible-translations/86d528c69b5bbcca9ce0dc0b17b037c1128c6651/YLT/YLT_bible.json"
 ];
 
+// ---------- Output ----------
 const OUT_DIR = path.join(__dirname, "dist");
 
+// ---------- Canon order & slugs ----------
 const BOOK_ORDER = [
-  'Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth','1 Samuel','2 Samuel','1 Kings','2 Kings','1 Chronicles','2 Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs','Ecclesiastes','Song of Solomon','Isaiah','Jeremiah','Lamentations','Ezekiel','Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk','Zephaniah','Haggai','Zechariah','Malachi','Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians','Galatians','Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon','Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation'
+  'Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth','1 Samuel','2 Samuel','1 Kings','2 Kings',
+  '1 Chronicles','2 Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs','Ecclesiastes','Song of Solomon','Isaiah',
+  'Jeremiah','Lamentations','Ezekiel','Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk','Zephaniah',
+  'Haggai','Zechariah','Malachi','Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians','Galatians',
+  'Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon',
+  'Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation'
 ];
 
 const BOOK_SLUGS = {
@@ -45,7 +57,7 @@ const BOOK_SLUGS = {
 
 // ---------- Helpers ----------
 const sleep = (ms)=> new Promise(r=> setTimeout(r, ms));
-const escapeHtml = (s)=> String(s??"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const escapeHtml = (s)=> String(s ?? "").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
 function detectFields(sample){
   const opt = { bk:['book','book_name','name','title','b','book_id'], ch:['chapter','chapter_num','c','chap','number'], vs:['verse','verse_num','v','num','id'], tx:['text','content','verse_text','t','body'] };
@@ -53,11 +65,10 @@ function detectFields(sample){
   const bk=pick(opt.bk), ch=pick(opt.ch), vs=pick(opt.vs), tx=pick(opt.tx);
   if(!bk||!ch||!vs||!tx) return null; return {bk,ch,vs,tx};
 }
-
-function normalizeBook(v){ return typeof v==='number' ? BOOK_ORDER[Math.max(1,Math.min(66,v))-1] : String(v).trim(); }
+const normalizeBook = (v)=> typeof v==='number' ? BOOK_ORDER[Math.max(1,Math.min(66,v))-1] : String(v).trim();
 
 function flattenBibleJSON(input){
-  if(Array.isArray(input)){
+  if(Array.isArray(input) && input.length){
     const f=detectFields(input[0]);
     if(f) return input.map(r=>({book:normalizeBook(r[f.bk]),chapter:+r[f.ch],verse:+r[f.vs],text:String(r[f.tx]).trim()}));
   }
@@ -69,7 +80,7 @@ function flattenBibleJSON(input){
         const cnum = +(c.chapter||c.number||ci+1);
         (c.verses||c.Verses||[]).forEach((v,vi)=>{
           if(typeof v==='string') out.push({book:bname,chapter:cnum,verse:vi+1,text:v});
-          else if(v) out.push({book:bname,chapter:cnum,verse: +(v.verse||v.number||vi+1), text:String(v.text||v.content||v.verse_text||"").trim()});
+          else if(v) out.push({book:bname,chapter:cnum,verse:+(v.verse||v.number||vi+1),text:String(v.text||v.content||v.verse_text||"").trim()});
         });
       });
     });
@@ -79,10 +90,10 @@ function flattenBibleJSON(input){
     const out=[];
     for(const bk of Object.keys(input)){
       const bname = normalizeBook(bk);
-      const chs = input[bk]; if(!chs || typeof chs!=='object') continue;
+      const chs=input[bk]; if(!chs||typeof chs!=='object') continue;
       for(const ch of Object.keys(chs)){
-        const cnum = +ch;
-        const vobj = chs[ch]; if(typeof vobj!=='object') continue;
+        const cnum=+ch;
+        const vobj=chs[ch]; if(typeof vobj!=='object') continue;
         for(const vs of Object.keys(vobj)){
           out.push({book:bname,chapter:cnum,verse:+vs,text:String(vobj[vs]).trim()});
         }
@@ -94,21 +105,19 @@ function flattenBibleJSON(input){
 }
 
 async function fetchJson(){
-  // prefer local file if present
   try{
     const buf = await fs.readFile(LOCAL_JSON, "utf8");
     console.log("Using local data:", LOCAL_JSON);
     return JSON.parse(buf);
   }catch(_){}
-  // else fetch from network
-  let lastErr = null;
+  let lastErr=null;
   for(const u of DATA_URLS){
     try{
       console.log("Fetching:", u);
       const r = await fetch(u, { cache: "no-store" });
       if(!r.ok) throw new Error("HTTP "+r.status);
       return await r.json();
-    }catch(e){ lastErr = e; await sleep(200); }
+    }catch(e){ lastErr=e; await sleep(200); }
   }
   throw lastErr || new Error("All fetches failed");
 }
@@ -124,8 +133,7 @@ function pageHtml({book,chapter,verse,text}){
 <title>${escapeHtml(title)}</title>
 <link rel="canonical" href="${escapeHtml(canonical)}"/>
 <meta name="description" content="${escapeHtml(ref)} — ${escapeHtml(TITLE_MAIN)}"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,600&display=swap" rel="stylesheet">
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}" crossorigin="anonymous"></script>
 <style>
@@ -144,7 +152,7 @@ header h1{margin:8px 0 0;font-size:24px;font-weight:600}
 .refline{display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
 .ref{font-variant:small-caps;letter-spacing:.03em;color:var(--ink-soft);font-size:14px}
 .verse{font-size:20px;line-height:1.65}
-.vnum{font-size:.7em;vertical-align:super;margin-right:6px;color:var(--muted)}
+.vnum{font-size:.7em;vertical-align:super;margin-right:6px;color:#777}
 .sharebar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
 .chip{background:var(--chip);border:1px solid var(--border);border-radius:999px;padding:8px 12px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
 .chip:hover{background:#eee}
@@ -174,6 +182,7 @@ footer a{color:var(--ink-soft);text-decoration:underline}
   <div class="verse"><span class="vnum">${verse}</span>${escapeHtml(text)}</div>
 
   <div class="sharebar" id="shareBar" aria-label="Share actions">
+    <!-- ORDER: Facebook, Instagram, X, LinkedIn, Email, Copy -->
     <button class="chip" id="fbBtn" title="Share on Facebook">
       <span class="icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 12.06C22 6.55 17.52 2 12.06 2 6.55 2 2 6.55 2 12.06 2 17.03 5.66 21.17 10.39 22v-7.02h-2.9v-2.92h2.9V9.41c0-2.87 1.7-4.46 4.3-4.46 1.25 0 2.56.22 2.56.22v2.82h-1.44c-1.42 0-1.86.88-1.86 1.79v2.16h3.17l-.51 2.92h-2.66V22C18.34 21.17 22 17.03 22 12.06z"/></svg>
@@ -232,12 +241,12 @@ const ABBR = {"gen":"Genesis","ex":"Exodus","exod":"Exodus","lev":"Leviticus","n
   if(!form||!input) return;
   form.addEventListener("submit", (e)=>{
     e.preventDefault();
-    const q = (input.value||"").trim().replace(/\\s+/g," ");
-    const m = q.match(/^(.+?)\\s+(\\d+)(?::|\\.)(\\d+)$/);
+    const q = (input.value||"").trim().replace(/\s+/g," ");
+    const m = q.match(/^(.+?)\s+(\d+)(?::|\.)(\d+)$/);
     if(!m){ input.value=""; input.placeholder="Try e.g., John 3:16"; return; }
     const raw = m[1].trim(), chap=+m[2], vs=+m[3];
-    const key = raw.toLowerCase().replace(/\\s+/g,'');
-    const book = ABBR[key] || raw.replace(/\\b([a-z])/gi,(x)=>x.toUpperCase()).replace(/([A-Z])([A-Z]+)/g,(m,a,b)=>a+b.toLowerCase());
+    const key = raw.toLowerCase().replace(/\s+/g,'');
+    const book = ABBR[key] || raw.replace(/\b([a-z])/gi,(x)=>x.toUpperCase()).replace(/([A-Z])([A-Z]+)/g,(m,a,b)=>a+b.toLowerCase());
     const slug = BOOK_SLUGS[book];
     if(!slug) { input.value=""; input.placeholder="Try e.g., John 3:16"; return; }
     location.href = \`\${ORIGIN}/\${slug}/\${chap}/\${vs}/\`;
@@ -250,11 +259,13 @@ const ABBR = {"gen":"Genesis","ex":"Exodus","exod":"Exodus","lev":"Leviticus","n
 // ---------- Build ----------
 async function main(){
   try{
+    console.log("Building for domain:", DOMAIN);
+
     await fs.rm(OUT_DIR, { recursive:true, force:true });
     await fs.mkdir(OUT_DIR, { recursive:true });
 
     // CNAME & robots
-    await fs.writeFile(path.join(OUT_DIR, "CNAME"), "www.ylt.livingwordbibles.com\n", "utf8");
+    await fs.writeFile(path.join(OUT_DIR, "CNAME"), DOMAIN + "\n", "utf8");
     await fs.writeFile(path.join(OUT_DIR, "robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n`, "utf8");
 
     const raw = await fetchJson();
