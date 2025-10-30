@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------- Domain / Origin ----------
 const CUSTOM_DOMAIN = process.env.CUSTOM_DOMAIN?.trim(); // e.g., "ylt.livingwordbibles.com"
-const DOMAIN = CUSTOM_DOMAIN || "ylt.livingwordbibles.com";          // default: no "www"
+const DOMAIN = CUSTOM_DOMAIN || "ylt.livingwordbibles.com"; // default: no "www"
 const SITE_ORIGIN = `https://${DOMAIN}`;
 
 // ---------- Brand / Ads ----------
@@ -122,7 +122,9 @@ async function fetchJson(){
   throw lastErr || new Error("All fetches failed");
 }
 
-function pageHtml({book,chapter,verse,text}){
+// ---------- Page template with Prev/Next ----------
+function pageHtml({book,chapter,verse,text}, maps){
+  const { maxChapterByBook, lastVerseOfLastChapterByBook, versesInChapterForBook } = maps;
   const ref = `${book} ${chapter}:${verse}`;
   const canonical = `${SITE_ORIGIN}/${BOOK_SLUGS[book]}/${chapter}/${verse}/`;
   const title = `${ref} — ${TITLE_MAIN}`;
@@ -146,6 +148,7 @@ header h1{margin:8px 0 0;font-size:24px;font-weight:600}
 .actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:8px}
 .btn{border:1px solid var(--border);background:#fff;color:var(--ink);border-radius:10px;padding:10px 14px;cursor:pointer;text-decoration:none;font-size:14px}
 .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.disabled{opacity:.5;pointer-events:none}
 .search{display:flex;gap:8px;align-items:center}
 .search input{border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;min-width:260px}
 .passage{border:1px solid var(--border);border-radius:14px;padding:14px;margin-top:12px;background:#fff}
@@ -153,6 +156,7 @@ header h1{margin:8px 0 0;font-size:24px;font-weight:600}
 .ref{font-variant:small-caps;letter-spacing:.03em;color:var(--ink-soft);font-size:14px}
 .verse{font-size:20px;line-height:1.65}
 .vnum{font-size:.7em;vertical-align:super;margin-right:6px;color:#777}
+.nav{display:flex;justify-content:space-between;gap:8px;margin:10px 0}
 .sharebar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
 .chip{background:var(--chip);border:1px solid var(--border);border-radius:999px;padding:8px 12px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
 .chip:hover{background:#eee}
@@ -180,6 +184,12 @@ footer a{color:var(--ink-soft);text-decoration:underline}
 <main class="passage">
   <div class="refline"><div class="ref" id="refText">${escapeHtml(ref)}</div></div>
   <div class="verse"><span class="vnum">${verse}</span>${escapeHtml(text)}</div>
+
+  <!-- Prev/Next nav -->
+  <div class="nav">
+    <a class="btn" id="prevBtn" href="#" title="Previous verse">⟨ Prev</a>
+    <a class="btn" id="nextBtn" href="#" title="Next verse">Next ⟩</a>
+  </div>
 
   <div class="sharebar" id="shareBar" aria-label="Share actions">
     <!-- ORDER: Facebook, Instagram, X, LinkedIn, Email, Copy -->
@@ -233,24 +243,89 @@ footer a{color:var(--ink-soft);text-decoration:underline}
 <script>
 const ORIGIN = "${SITE_ORIGIN}";
 const BOOK_SLUGS = ${JSON.stringify(BOOK_SLUGS)};
+const BOOKS = ${JSON.stringify(BOOK_ORDER)};
+const CURRENT = { book: ${JSON.stringify(book)}, chapter: ${chapter}, verse: ${verse} };
+const LAST_CHAPTER = ${JSON.stringify(maxChapterByBook)};
+const LAST_VERSE_LAST_CHAPTER = ${JSON.stringify(lastVerseOfLastChapterByBook)};
+const VERSES_IN_CHAPTER = ${JSON.stringify(versesInChapterForBook)};
 const ABBR = {"gen":"Genesis","ex":"Exodus","exod":"Exodus","lev":"Leviticus","num":"Numbers","deut":"Deuteronomy","dt":"Deuteronomy","josh":"Joshua","judg":"Judges","1sam":"1 Samuel","2sam":"2 Samuel","1kgs":"1 Kings","2kgs":"2 Kings","1chr":"1 Chronicles","2chr":"2 Chronicles","neh":"Nehemiah","esth":"Esther","job":"Job","ps":"Psalms","psa":"Psalms","prov":"Proverbs","eccl":"Ecclesiastes","song":"Song of Solomon","cant":"Song of Solomon","isa":"Isaiah","jer":"Jeremiah","lam":"Lamentations","ezek":"Ezekiel","dan":"Daniel","hos":"Hosea","joel":"Joel","amos":"Amos","obad":"Obadiah","jon":"Jonah","mic":"Micah","nah":"Nahum","hab":"Habakkuk","zeph":"Zephaniah","hag":"Haggai","zech":"Zechariah","mal":"Malachi","mt":"Matthew","matt":"Matthew","mk":"Mark","mrk":"Mark","lk":"Luke","lu":"Luke","jn":"John","rom":"Romans","1cor":"1 Corinthians","2cor":"2 Corinthians","gal":"Galatians","eph":"Ephesians","phil":"Philippians","col":"Colossians","1thess":"1 Thessalonians","2thess":"2 Thessalonians","1tim":"1 Timothy","2tim":"2 Timothy","tit":"Titus","phlm":"Philemon","heb":"Hebrews","jas":"James","1pet":"1 Peter","2pet":"2 Peter","1jn":"1 John","2jn":"2 John","3jn":"3 John","jude":"Jude","rev":"Revelation"};
 
+// Search bar
 (function(){
   const form = document.getElementById("yltSearch");
   const input = document.getElementById("yltQuery");
   if(!form||!input) return;
   form.addEventListener("submit", (e)=>{
     e.preventDefault();
-    const q = (input.value||"").trim().replace(/\s+/g," ");
-    const m = q.match(/^(.+?)\s+(\d+)(?::|\.)(\d+)$/);
+    const q = (input.value||"").trim().replace(/\\s+/g," ");
+    const m = q.match(/^(.+?)\\s+(\\d+)(?::|\\.)(\\d+)$/);
     if(!m){ input.value=""; input.placeholder="Try e.g., John 3:16"; return; }
     const raw = m[1].trim(), chap=+m[2], vs=+m[3];
-    const key = raw.toLowerCase().replace(/\s+/g,'');
-    const book = ABBR[key] || raw.replace(/\b([a-z])/gi,(x)=>x.toUpperCase()).replace(/([A-Z])([A-Z]+)/g,(m,a,b)=>a+b.toLowerCase());
+    const key = raw.toLowerCase().replace(/\\s+/g,'');
+    const book = ABBR[key] || raw.replace(/\\b([a-z])/gi,(x)=>x.toUpperCase()).replace(/([A-Z])([A-Z]+)/g,(m,a,b)=>a+b.toLowerCase());
     const slug = BOOK_SLUGS[book];
     if(!slug) { input.value=""; input.placeholder="Try e.g., John 3:16"; return; }
     location.href = \`\${ORIGIN}/\${slug}/\${chap}/\${vs}/\`;
   });
+})();
+
+// Prev/Next helpers
+(function(){
+  const prevA = document.getElementById('prevBtn');
+  const nextA = document.getElementById('nextBtn');
+  function toUrl(bk,ch,vs){ return \`\${ORIGIN}/\${BOOK_SLUGS[bk]}/\${ch}/\${vs}/\`; }
+  function prevRef(){
+    const {book,chapter,verse} = CURRENT;
+    if(verse > 1) return {book, chapter, verse: verse-1};
+    if(chapter > 1){
+      const maxPrev = Number(VERSES_IN_CHAPTER[String(chapter-1)]||1);
+      return {book, chapter: chapter-1, verse: maxPrev};
+    }
+    const bi = BOOKS.indexOf(book);
+    if(bi > 0){
+      const pb = BOOKS[bi-1];
+      const lc = Number(LAST_CHAPTER[pb]||1);
+      const lv = Number(LAST_VERSE_LAST_CHAPTER[pb]||1);
+      return {book: pb, chapter: lc, verse: lv};
+    }
+    return null;
+  }
+  function nextRef(){
+    const {book,chapter,verse} = CURRENT;
+    const maxV = Number(VERSES_IN_CHAPTER[String(chapter)]||1);
+    if(verse < maxV) return {book, chapter, verse: verse+1};
+    const maxC = Number(LAST_CHAPTER[book]||1);
+    if(chapter < maxC) return {book, chapter: chapter+1, verse: 1};
+    const bi = BOOKS.indexOf(book);
+    if(bi >= 0 && bi < BOOKS.length-1){
+      const nb = BOOKS[bi+1];
+      return {book: nb, chapter: 1, verse: 1};
+    }
+    return null;
+  }
+  const p = prevRef(), n = nextRef();
+  if(p) prevA.href = toUrl(p.book,p.chapter,p.verse); else { prevA.classList.add('disabled'); prevA.setAttribute('aria-disabled','true'); prevA.addEventListener('click', e=>e.preventDefault()); }
+  if(n) nextA.href = toUrl(n.book,n.chapter,n.verse); else { nextA.classList.add('disabled'); nextA.setAttribute('aria-disabled','true'); nextA.addEventListener('click', e=>e.preventDefault()); }
+})();
+
+// Share handlers
+(function(){
+  function currentRef(){ return \`\${CURRENT.book} \${CURRENT.chapter}:\${CURRENT.verse}\`; }
+  function payload(){
+    const ref = currentRef();
+    const url = location.href;
+    const verseEl = document.querySelector('.verse');
+    const textOnly = verseEl ? verseEl.textContent.replace(/^\\s*\\d+\\s*/, '').trim() : '';
+    const tweet = textOnly ? \`\${ref} — \${textOnly}\` : ref;
+    return {ref,url,tweet,textOnly};
+  }
+  function openWin(u){ window.open(u,'_blank','noopener'); }
+  document.getElementById('fbBtn')?.addEventListener('click', ()=>{ const {url}=payload(); openWin('https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(url)); });
+  document.getElementById('xBtn')?.addEventListener('click', ()=>{ const {url,tweet}=payload(); openWin('https://twitter.com/intent/tweet?text='+encodeURIComponent(tweet)+'&url='+encodeURIComponent(url)); });
+  document.getElementById('liBtn')?.addEventListener('click', ()=>{ const {url}=payload(); openWin('https://www.linkedin.com/sharing/share-offsite/?url='+encodeURIComponent(url)); });
+  document.getElementById('emailBtn')?.addEventListener('click', ()=>{ const {ref,url,textOnly}=payload(); const subj=encodeURIComponent(ref); const body=encodeURIComponent((textOnly? textOnly+'\\n\\n':'' )+url); location.href=\`mailto:?subject=\${subj}&body=\${body}\`; });
+  document.getElementById('copyBtn')?.addEventListener('click', async ()=>{ const {ref,url,textOnly}=payload(); try{ await navigator.clipboard.writeText(\`\${ref}\${textOnly?' — '+textOnly:''}\\n\${url}\`); const b=document.getElementById('copyBtn'); b.classList.add('copy-ok'); setTimeout(()=>b.classList.remove('copy-ok'),1200);}catch(e){} });
+  document.getElementById('igBtn')?.addEventListener('click', ()=>{ openWin('https://www.instagram.com/living.word.bibles/'); });
 })();
 </script>
 </body></html>`;
@@ -270,6 +345,21 @@ async function main(){
 
     const raw = await fetchJson();
     const rows = flattenBibleJSON(raw);
+
+    // Build navigation maps (chapters/verses)
+    const maxChapterByBook = {};
+    const versesByBook = {}; // { [book]: { [chapter]: maxVerse } }
+    for (const {book, chapter, verse} of rows) {
+      if (!versesByBook[book]) versesByBook[book] = {};
+      maxChapterByBook[book] = Math.max(maxChapterByBook[book] || 0, chapter);
+      const prevMax = versesByBook[book][chapter] || 0;
+      if (verse > prevMax) versesByBook[book][chapter] = verse;
+    }
+    const lastVerseOfLastChapterByBook = {};
+    for (const b of Object.keys(maxChapterByBook)) {
+      const lc = maxChapterByBook[b];
+      lastVerseOfLastChapterByBook[b] = versesByBook[b][lc] || 1;
+    }
 
     // Sort canonically
     rows.sort((a,b)=>{
@@ -292,7 +382,15 @@ async function main(){
       if(!BOOK_SLUGS[book]) continue;
       const dir = path.join(OUT_DIR, BOOK_SLUGS[book], String(chapter), String(verse));
       await fs.mkdir(dir, { recursive:true });
-      await fs.writeFile(path.join(dir, "index.html"), pageHtml({book,chapter,verse,text}), "utf8");
+      const html = pageHtml(
+        {book,chapter,verse,text},
+        {
+          maxChapterByBook,
+          lastVerseOfLastChapterByBook,
+          versesInChapterForBook: versesByBook[book]
+        }
+      );
+      await fs.writeFile(path.join(dir, "index.html"), html, "utf8");
       urls.push(`${SITE_ORIGIN}/${BOOK_SLUGS[book]}/${chapter}/${verse}/`);
     }
 
